@@ -37,6 +37,7 @@ const route = useRoute()
 const menus = [
   { path: '/dashboard', title: '运行看板', icon: 'DataLine' },
   { path: '/lamps', title: '路灯台账', icon: 'Postcard' },
+  { path: '/reports', title: '市民报修', icon: 'Bell' },
   { path: '/faults', title: '故障登记', icon: 'Warning' },
   { path: '/repairs', title: '维修记录录入', icon: 'Tools' },
   { path: '/status', title: '维修状态查询', icon: 'Search' },

@@ -44,6 +44,14 @@ export const REPAIR_RESULT = {
   unfixable: { label: '无法修复', type: 'danger' },
 }
 
+// 市民报修核实状态。
+export const REPORT_STATUS = {
+  pending: { label: '待核实', type: 'warning' },
+  confirmed: { label: '已转故障', type: 'success' },
+  invalid: { label: '无效', type: 'info' },
+  merged: { label: '已合并', type: 'primary' },
+}
+
 // 追踪时间线的节点名称。
 export const TIMELINE_STAGE = {
   reported: { label: '故障登记', type: 'primary' },

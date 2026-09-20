@@ -13,6 +13,7 @@ import (
 	"streetlight/internal/modules/fault"
 	"streetlight/internal/modules/lamp"
 	"streetlight/internal/modules/repair"
+	"streetlight/internal/modules/report"
 	"streetlight/pkg/pagination"
 )
 
@@ -49,17 +50,18 @@ type TrackQuery struct {
 }
 
 // Service 提供跨模块的维修状态查询能力(只读)。
-// 作为读模型, 它直接基于 lamp / fault / repair 三张表组装视图, 避免不必要的多次往返查询。
+// 作为读模型, 它直接基于 lamp / fault / repair / report 四张表组装视图, 避免不必要的多次往返查询。
 type Service struct {
 	db      *gorm.DB
 	lamps   *lamp.Repository
 	faults  *fault.Repository
 	repairs *repair.Repository
+	reports *report.Repository
 }
 
 // NewService 构造维修状态查询服务。
-func NewService(db *gorm.DB, lamps *lamp.Repository, faults *fault.Repository, repairs *repair.Repository) *Service {
-	return &Service{db: db, lamps: lamps, faults: faults, repairs: repairs}
+func NewService(db *gorm.DB, lamps *lamp.Repository, faults *fault.Repository, repairs *repair.Repository, reports *report.Repository) *Service {
+	return &Service{db: db, lamps: lamps, faults: faults, repairs: repairs, reports: reports}
 }
 
 // Overview 汇总维修状态看板数据。
@@ -106,6 +108,10 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 	if err != nil {
 		return nil, err
 	}
+	faultBySource, err := s.faults.CountByColumn(ctx, "source")
+	if err != nil {
+		return nil, err
+	}
 	todayReported, err := s.faults.CountReportedBetween(ctx, todayStart, tomorrow)
 	if err != nil {
 		return nil, err
@@ -145,6 +151,17 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 		return nil, err
 	}
 
+	reportByStatus, err := s.reports.CountByColumn(ctx, "status")
+	if err != nil {
+		return nil, err
+	}
+	todayReports, err := s.reports.CountReportedBetween(ctx, todayStart, tomorrow)
+	if err != nil {
+		return nil, err
+	}
+
+	citizenTotal := faultBySource[fault.SourceCitizen]
+
 	return &Overview{
 		Lamp: LampSummary{
 			Total:       lampTotal,
@@ -157,6 +174,8 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 			ByStatus:      faultByStatus,
 			TodayReported: todayReported,
 			OverdueTotal:  overdueTotal,
+			CitizenTotal:  citizenTotal,
+			InternalTotal: faultTotal - citizenTotal,
 		},
 		Repair: RepairSummary{
 			Total:             repairTotal,
@@ -166,8 +185,16 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 			AverageDurationHr: round2(averageDuration),
 			TotalCost:         round2(totalCost),
 		},
+		Report: ReportSummary{
+			PendingTotal:   reportByStatus[report.StatusPending],
+			TodayReported:  todayReports,
+			ConfirmedTotal: reportByStatus[report.StatusConfirmed],
+			InvalidTotal:   reportByStatus[report.StatusInvalid],
+			MergedTotal:    reportByStatus[report.StatusMerged],
+		},
 		FaultByType:   topCounts(faultByType, 0),
 		FaultByLevel:  orderedCounts(faultByLevel, fault.Levels()),
+		FaultBySource: orderedCounts(faultBySource, fault.Sources()),
 		TopRoads:      topCounts(faultByRoad, 5),
 		RecentFaults:  toBriefs(recentFaults),
 		OverdueFaults: toBriefs(overdueFaults),

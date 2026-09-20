@@ -51,6 +51,11 @@ func (s *Service) Get(ctx context.Context, id uint) (*Lamp, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
+// GetByCode 按路灯编号查询, 供市民报修模块解析灯杆标识编号。
+func (s *Service) GetByCode(ctx context.Context, code string) (*Lamp, error) {
+	return s.repo.GetByCode(ctx, strings.TrimSpace(code))
+}
+
 // List 分页查询路灯台账, 同时返回归一化后的分页信息供响应封装使用。
 func (s *Service) List(ctx context.Context, filter ListQuery) ([]Lamp, int64, pagination.Query, error) {
 	page := pagination.Parse(filter.Params, lampSortSpec)

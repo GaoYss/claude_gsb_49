@@ -20,6 +20,12 @@ const routes = [
         meta: { title: '路灯台账', icon: 'Postcard' },
       },
       {
+        path: 'reports',
+        name: 'reports',
+        component: () => import('@/views/report/ReportListView.vue'),
+        meta: { title: '市民报修', icon: 'Bell' },
+      },
+      {
         path: 'faults',
         name: 'faults',
         component: () => import('@/views/fault/FaultListView.vue'),

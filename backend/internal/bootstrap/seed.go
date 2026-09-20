@@ -10,6 +10,7 @@ import (
 	"streetlight/internal/modules/fault"
 	"streetlight/internal/modules/lamp"
 	"streetlight/internal/modules/repair"
+	"streetlight/internal/modules/report"
 )
 
 const hour = time.Hour
@@ -142,6 +143,20 @@ func seed(db *gorm.DB) error {
 		}
 	}
 
+	reports := buildSeedReports(now, lamps, faults)
+	if err := db.Create(&reports).Error; err != nil {
+		return fmt.Errorf("写入市民报修演示数据失败: %w", err)
+	}
+	// 演示重复上报合并: 第二条报修合并进第一条, 主单重复次数 +1。
+	if err := db.Model(&report.Report{}).Where("id = ?", reports[1].ID).
+		Update("merged_into_id", reports[0].ID).Error; err != nil {
+		return fmt.Errorf("回填报修合并关系失败: %w", err)
+	}
+	if err := db.Model(&report.Report{}).Where("id = ?", reports[0].ID).
+		Update("merge_count", 1).Error; err != nil {
+		return fmt.Errorf("回填报修合并关系失败: %w", err)
+	}
+
 	if err := syncSeedLampStatus(db, faults, lamps); err != nil {
 		return err
 	}
@@ -150,6 +165,7 @@ func seed(db *gorm.DB) error {
 		"路灯", len(lamps),
 		"故障", len(faults),
 		"维修记录", len(repairs),
+		"市民报修", len(reports),
 	)
 	return nil
 }
@@ -346,6 +362,80 @@ func seedFaultCases() []seedFaultCase {
 			},
 		},
 	}
+}
+
+// buildSeedReports 生成市民报修演示数据, 覆盖待核实 / 已合并 / 已转故障 / 无效四种状态。
+// 返回顺序固定: 前两条为同一路灯的重复上报(第二条合并进第一条)。
+func buildSeedReports(now time.Time, lamps []lamp.Lamp, faults []fault.Fault) []report.Report {
+	at := func(ago time.Duration) time.Time { return now.Add(-ago) }
+	lampID := func(index int) *uint { id := lamps[index].ID; return &id }
+
+	verifiedAt := at(29 * hour)
+	invalidVerifiedAt := at(48 * hour)
+
+	rows := []report.Report{
+		{
+			// 待核实: 凭灯杆编号提交, 与下一条构成重复上报演示。
+			LampID: lampID(14), LampCode: lamps[14].Code, RoadName: lamps[14].RoadName,
+			FaultType: "灯不亮", Description: "市民反映该灯杆连续两晚不亮, 附近光线很暗",
+			Reporter: "周女士", ReporterPhone: "13700001111", ReportedAt: at(3 * hour),
+			Status: report.StatusPending,
+		},
+		{
+			// 已合并: 同一路灯短时间内的重复上报, merged_into_id 在写入后回填。
+			LampID: lampID(14), LampCode: lamps[14].Code, RoadName: lamps[14].RoadName,
+			FaultType: "灯不亮", Description: "路灯不亮影响夜间出行, 请尽快处理",
+			Reporter: "刘先生", ReporterPhone: "13700002222", ReportedAt: at(1 * hour),
+			Status: report.StatusMerged,
+		},
+		{
+			// 待核实: 无灯杆编号, 仅凭位置描述提交。
+			LocationDesc:  "滨江路与解放路交叉口东南角灯杆",
+			FaultType:     "其他",
+			Description:   "灯杆底部检修门脱落, 内部线缆外露, 存在安全隐患",
+			Reporter:      "陈先生",
+			ReporterPhone: "13700003333",
+			ReportedAt:    at(5 * hour),
+			Status:        report.StatusPending,
+		},
+		{
+			// 已转故障: 对应故障单 GD...(灯光闪烁, 市民李梅上报)。
+			LampID: lampID(1), LampCode: lamps[1].Code, RoadName: lamps[1].RoadName,
+			FaultType: "灯光闪烁", Description: "市民来电反馈该路段灯光持续闪烁, 影响行车视线",
+			Reporter: "李梅", ReporterPhone: "13800001234", ReportedAt: at(30 * hour),
+			Status:       report.StatusConfirmed,
+			FaultID:      &faults[1].ID,
+			FaultNo:      faults[1].FaultNo,
+			VerifyRemark: "电话回访确认属实, 已转故障处理",
+			VerifiedBy:   "值班员小赵",
+			VerifiedAt:   &verifiedAt,
+		},
+		{
+			// 无效: 现场核查不属实, 已说明原因。
+			LampID: lampID(16), LampCode: lamps[16].Code, RoadName: lamps[16].RoadName,
+			FaultType: "灯杆倾斜", Description: "市民报称灯杆摇晃, 担心倾倒",
+			Reporter: "市民热线", ReporterPhone: "13700004444", ReportedAt: at(50 * hour),
+			Status:        report.StatusInvalid,
+			InvalidReason: "现场核查灯杆基础牢固、垂直度正常, 系大风天气错觉, 判定无效",
+			VerifiedBy:    "值班员小赵",
+			VerifiedAt:    &invalidVerifiedAt,
+		},
+		{
+			// 待核实: 凭灯杆编号提交。
+			LampID: lampID(7), LampCode: lamps[7].Code, RoadName: lamps[7].RoadName,
+			FaultType: "灯具破损", Description: "灯罩破裂, 碎片有坠落风险, 请尽快围挡处理",
+			Reporter: "王阿姨", ReporterPhone: "13700005555", ReportedAt: at(2 * hour),
+			Status: report.StatusPending,
+		},
+	}
+
+	sequences := map[string]int{}
+	for index := range rows {
+		prefix := "BX" + rows[index].ReportedAt.Format("20060102")
+		sequences[prefix]++
+		rows[index].ReportNo = fmt.Sprintf("%s%04d", prefix, sequences[prefix])
+	}
+	return rows
 }
 
 // syncSeedLampStatus 依据演示故障数据回填路灯运行状态, 保证台账与故障一致。

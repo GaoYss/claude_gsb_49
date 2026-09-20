@@ -3,6 +3,7 @@ package status_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -13,6 +14,7 @@ import (
 	"streetlight/internal/modules/fault"
 	"streetlight/internal/modules/lamp"
 	"streetlight/internal/modules/repair"
+	"streetlight/internal/modules/report"
 	"streetlight/internal/modules/status"
 )
 
@@ -20,6 +22,7 @@ type harness struct {
 	lamps   *lamp.Service
 	faults  *fault.Service
 	repairs *repair.Service
+	reports *report.Repository
 	status  *status.Service
 }
 
@@ -36,7 +39,7 @@ func newHarness(t *testing.T) *harness {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 
-	require.NoError(t, db.AutoMigrate(&lamp.Lamp{}, &fault.Fault{}, &repair.Repair{}))
+	require.NoError(t, db.AutoMigrate(&lamp.Lamp{}, &fault.Fault{}, &repair.Repair{}, &report.Report{}))
 
 	lampRepository := lamp.NewRepository(db)
 	lampService := lamp.NewService(lampRepository)
@@ -48,11 +51,14 @@ func newHarness(t *testing.T) *harness {
 	repairRepository := repair.NewRepository(db)
 	repairService := repair.NewService(repairRepository, faultService)
 
+	reportRepository := report.NewRepository(db)
+
 	return &harness{
 		lamps:   lampService,
 		faults:  faultService,
 		repairs: repairService,
-		status:  status.NewService(db, lampRepository, faultRepository, repairRepository),
+		reports: reportRepository,
+		status:  status.NewService(db, lampRepository, faultRepository, repairRepository, reportRepository),
 	}
 }
 
@@ -91,7 +97,18 @@ func TestOverviewAggregatesBusinessState(t *testing.T) {
 	closedLamp := h.createLamp(t, "LD-S-002", "建设大道")
 	h.createLamp(t, "LD-S-003", "中山路")
 
-	h.createFault(t, openLamp.ID, "灯不亮")
+	// 市民来源故障, 用于验证概览对市民/内部来源的区分。
+	_, err := h.faults.Create(ctx, fault.CreateRequest{
+		LampID: openLamp.ID, FaultType: "灯不亮", FaultLevel: fault.LevelHigh,
+		Source: fault.SourceCitizen, Description: "市民报修核实后转入", Reporter: "市民",
+	})
+	require.NoError(t, err)
+
+	// 一条待核实报修, 用于验证报修队列汇总。
+	require.NoError(t, h.reports.Create(ctx, &report.Report{
+		ReportNo: "BX209901010001", LampCode: openLamp.Code, FaultType: "灯不亮",
+		Description: "状态查询模块测试报修", ReportedAt: time.Now(), Status: report.StatusPending,
+	}))
 
 	closedFault := h.createFault(t, closedLamp.ID, "灯光闪烁")
 	record, err := h.repairs.Create(ctx, repair.CreateRequest{
@@ -118,6 +135,11 @@ func TestOverviewAggregatesBusinessState(t *testing.T) {
 	require.Equal(t, cost, overview.Repair.TotalCost)
 	require.Equal(t, int64(1), overview.Lamp.ByRunStatus[lamp.RunStatusFault])
 	require.Equal(t, int64(2), overview.Lamp.ByRunStatus[lamp.RunStatusNormal])
+	require.Equal(t, int64(1), overview.Fault.CitizenTotal)
+	require.Equal(t, int64(1), overview.Fault.InternalTotal)
+	require.Len(t, overview.FaultBySource, len(fault.Sources()))
+	require.Equal(t, int64(1), overview.Report.PendingTotal)
+	require.Equal(t, int64(1), overview.Report.TodayReported)
 	require.Len(t, overview.FaultByLevel, len(fault.Levels()))
 	require.NotEmpty(t, overview.RecentFaults)
 	require.Equal(t, status.OverdueThreshold.Hours(), overview.OverdueHours)

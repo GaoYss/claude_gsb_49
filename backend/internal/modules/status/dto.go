@@ -41,6 +41,17 @@ type FaultSummary struct {
 	ByStatus      map[string]int64 `json:"by_status"`
 	TodayReported int64            `json:"today_reported"`
 	OverdueTotal  int64            `json:"overdue_total"`
+	CitizenTotal  int64            `json:"citizen_total"`  // 市民报修来源
+	InternalTotal int64            `json:"internal_total"` // 内部发现(巡检/告警/其它)
+}
+
+// ReportSummary 市民报修队列概览。
+type ReportSummary struct {
+	PendingTotal   int64 `json:"pending_total"`
+	TodayReported  int64 `json:"today_reported"`
+	ConfirmedTotal int64 `json:"confirmed_total"`
+	InvalidTotal   int64 `json:"invalid_total"`
+	MergedTotal    int64 `json:"merged_total"`
 }
 
 // RepairSummary 维修概览。
@@ -55,11 +66,13 @@ type RepairSummary struct {
 
 // Overview 维修状态总览看板。
 type Overview struct {
-	Lamp          LampSummary  `json:"lamp"`
-	Fault         FaultSummary `json:"fault"`
+	Lamp          LampSummary   `json:"lamp"`
+	Fault         FaultSummary  `json:"fault"`
 	Repair        RepairSummary `json:"repair"`
+	Report        ReportSummary `json:"report"`
 	FaultByType   []LabelCount  `json:"fault_by_type"`
 	FaultByLevel  []LabelCount  `json:"fault_by_level"`
+	FaultBySource []LabelCount  `json:"fault_by_source"`
 	TopRoads      []LabelCount  `json:"top_roads"`
 	RecentFaults  []FaultBrief  `json:"recent_faults"`
 	OverdueFaults []FaultBrief  `json:"overdue_faults"`
