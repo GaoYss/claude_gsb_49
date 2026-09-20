@@ -13,6 +13,7 @@ import (
 	"streetlight/internal/modules/fault"
 	"streetlight/internal/modules/lamp"
 	"streetlight/internal/modules/repair"
+	"streetlight/internal/modules/report"
 	"streetlight/pkg/pagination"
 )
 
@@ -55,11 +56,18 @@ type Service struct {
 	lamps   *lamp.Repository
 	faults  *fault.Repository
 	repairs *repair.Repository
+	reports *report.Repository
 }
 
 // NewService 构造维修状态查询服务。
-func NewService(db *gorm.DB, lamps *lamp.Repository, faults *fault.Repository, repairs *repair.Repository) *Service {
-	return &Service{db: db, lamps: lamps, faults: faults, repairs: repairs}
+func NewService(
+	db *gorm.DB,
+	lamps *lamp.Repository,
+	faults *fault.Repository,
+	repairs *repair.Repository,
+	reports *report.Repository,
+) *Service {
+	return &Service{db: db, lamps: lamps, faults: faults, repairs: repairs, reports: reports}
 }
 
 // Overview 汇总维修状态看板数据。
@@ -106,11 +114,20 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 	if err != nil {
 		return nil, err
 	}
+	faultBySource, err := s.faults.CountByColumn(ctx, "source")
+	if err != nil {
+		return nil, err
+	}
 	todayReported, err := s.faults.CountReportedBetween(ctx, todayStart, tomorrow)
 	if err != nil {
 		return nil, err
 	}
 	overdueTotal, err := s.faults.CountPendingBefore(ctx, overdueBefore)
+	if err != nil {
+		return nil, err
+	}
+
+	reportSummary, err := s.buildReportSummary(ctx, todayStart, tomorrow)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +172,9 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 			Total:         faultTotal,
 			OpenTotal:     faultOpen,
 			ByStatus:      faultByStatus,
+			BySource:      faultBySource,
+			CitizenTotal:  faultBySource[fault.SourceCitizen],
+			InternalTotal: sumInternalSources(faultBySource),
 			TodayReported: todayReported,
 			OverdueTotal:  overdueTotal,
 		},
@@ -166,13 +186,54 @@ func (s *Service) Overview(ctx context.Context) (*Overview, error) {
 			AverageDurationHr: round2(averageDuration),
 			TotalCost:         round2(totalCost),
 		},
+		Report:        reportSummary,
 		FaultByType:   topCounts(faultByType, 0),
 		FaultByLevel:  orderedCounts(faultByLevel, fault.Levels()),
+		FaultBySource: orderedCounts(faultBySource, fault.Sources()),
 		TopRoads:      topCounts(faultByRoad, 5),
 		RecentFaults:  toBriefs(recentFaults),
 		OverdueFaults: toBriefs(overdueFaults),
 		OverdueHours:  OverdueThreshold.Hours(),
 		GeneratedAt:   now,
+	}, nil
+}
+
+// internalSources 是内部发现渠道, 与"市民上报"相对。
+var internalSources = []string{fault.SourceInspection, fault.SourceMonitoring, fault.SourceOther}
+
+// sumInternalSources 汇总内部发现(巡检 / 系统告警 / 其它)的故障数量。
+func sumInternalSources(counts map[string]int64) int64 {
+	var total int64
+	for _, source := range internalSources {
+		total += counts[source]
+	}
+	return total
+}
+
+// buildReportSummary 汇总市民报修队列的核实情况。
+func (s *Service) buildReportSummary(ctx context.Context, todayStart, tomorrow time.Time) (ReportSummary, error) {
+	if s.reports == nil {
+		return ReportSummary{}, nil
+	}
+	byStatus, err := s.reports.CountByStatus(ctx)
+	if err != nil {
+		return ReportSummary{}, err
+	}
+	todayNew, err := s.reports.CountReportedBetween(ctx, todayStart, tomorrow)
+	if err != nil {
+		return ReportSummary{}, err
+	}
+	var total int64
+	for _, value := range byStatus {
+		total += value
+	}
+	return ReportSummary{
+		Total:          total,
+		PendingTotal:   byStatus[report.StatusPending],
+		ConfirmedTotal: byStatus[report.StatusConfirmed],
+		InvalidTotal:   byStatus[report.StatusInvalid],
+		MergedTotal:    byStatus[report.StatusMerged],
+		TodayNew:       todayNew,
 	}, nil
 }
 
@@ -304,11 +365,12 @@ func (s *Service) Track(ctx context.Context, query TrackQuery) (*TrackResult, er
 		}
 
 		result := &TrackResult{
-			SearchType:    "lamp",
-			Lamp:          device,
-			Repairs:       make([]repair.Repair, 0),
-			Timeline:      make([]TimelineEvent, 0),
-			RelatedFaults: toBriefs(history),
+			SearchType:     "lamp",
+			Lamp:           device,
+			Repairs:        make([]repair.Repair, 0),
+			CitizenReports: make([]report.Report, 0),
+			Timeline:       make([]TimelineEvent, 0),
+			RelatedFaults:  toBriefs(history),
 		}
 		if len(history) > 0 {
 			latest := history[0]
@@ -316,9 +378,14 @@ func (s *Service) Track(ctx context.Context, query TrackQuery) (*TrackResult, er
 			if err != nil {
 				return nil, err
 			}
+			reports, err := s.reports.ListByFault(ctx, latest.ID)
+			if err != nil {
+				return nil, err
+			}
 			result.Fault = &latest
 			result.Repairs = repairs
-			result.Timeline = buildTimeline(&latest, repairs)
+			result.CitizenReports = reports
+			result.Timeline = buildTimeline(&latest, repairs, reports)
 		}
 		return result, nil
 
@@ -337,12 +404,20 @@ func (s *Service) buildFaultTrack(ctx context.Context, entity *fault.Fault) (*Tr
 	if err != nil {
 		return nil, err
 	}
+	reports := make([]report.Report, 0)
+	if s.reports != nil {
+		reports, err = s.reports.ListByFault(ctx, entity.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &TrackResult{
-		SearchType: "fault",
-		Lamp:       device,
-		Fault:      entity,
-		Repairs:    repairs,
-		Timeline:   buildTimeline(entity, repairs),
+		SearchType:     "fault",
+		Lamp:           device,
+		Fault:          entity,
+		Repairs:        repairs,
+		CitizenReports: reports,
+		Timeline:       buildTimeline(entity, repairs, reports),
 	}, nil
 }
 
@@ -411,9 +486,40 @@ func (s *Service) latestRepairs(ctx context.Context, lampIDs []uint) (map[uint]r
 	return result, nil
 }
 
-// buildTimeline 依据故障与维修记录构建处置时间线。
-func buildTimeline(entity *fault.Fault, repairs []repair.Repair) []TimelineEvent {
-	events := make([]TimelineEvent, 0, len(repairs)*2+2)
+// buildTimeline 依据故障与维修记录构建处置时间线, 市民来源故障额外展示报修受理与核实节点。
+func buildTimeline(entity *fault.Fault, repairs []repair.Repair, reports []report.Report) []TimelineEvent {
+	events := make([]TimelineEvent, 0, len(reports)*2+len(repairs)*2+2)
+
+	// 市民报修来源: 展示市民报修受理(保留原始描述)与核实转故障节点。
+	var masterReport *report.Report
+	for index := range reports {
+		item := &reports[index]
+		if item.Status == report.StatusMerged {
+			continue
+		}
+		if masterReport == nil || item.ReportedAt.Before(masterReport.ReportedAt) {
+			masterReport = item
+		}
+	}
+	if masterReport != nil {
+		events = append(events, TimelineEvent{
+			Stage:     "citizen_reported",
+			Label:     "市民报修受理",
+			Operator:  masterReport.Reporter,
+			Detail:    masterReport.ReportNo + " " + masterReport.Content,
+			Timestamp: masterReport.ReportedAt,
+		})
+		if masterReport.VerifiedAt != nil {
+			detail := strings.TrimSpace("现场核实有效, 转正式故障 " + entity.FaultNo + " " + masterReport.VerifyRemark)
+			events = append(events, TimelineEvent{
+				Stage:     "citizen_verified",
+				Label:     "核实转故障",
+				Operator:  masterReport.VerifiedBy,
+				Detail:    detail,
+				Timestamp: *masterReport.VerifiedAt,
+			})
+		}
+	}
 
 	events = append(events, TimelineEvent{
 		Stage:     "reported",
@@ -503,6 +609,7 @@ func toBriefs(entities []fault.Fault) []FaultBrief {
 			RoadName:     item.RoadName,
 			FaultType:    item.FaultType,
 			FaultLevel:   item.FaultLevel,
+			Source:       item.Source,
 			Status:       item.Status,
 			ReportedAt:   item.ReportedAt,
 			WaitingHours: round2(now.Sub(item.ReportedAt).Hours()),

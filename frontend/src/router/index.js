@@ -26,6 +26,12 @@ const routes = [
         meta: { title: '故障登记', icon: 'Warning' },
       },
       {
+        path: 'reports',
+        name: 'reports',
+        component: () => import('@/views/report/ReportListView.vue'),
+        meta: { title: '市民报修', icon: 'Bell' },
+      },
+      {
         path: 'repairs',
         name: 'repairs',
         component: () => import('@/views/repair/RepairListView.vue'),

@@ -44,8 +44,27 @@ export const REPAIR_RESULT = {
   unfixable: { label: '无法修复', type: 'danger' },
 }
 
+// 市民报修核实状态。
+export const REPORT_STATUS = {
+  pending: { label: '待核实', type: 'danger' },
+  confirmed: { label: '核实有效', type: 'success' },
+  invalid: { label: '核实无效', type: 'info' },
+  merged: { label: '重复合并', type: 'warning' },
+}
+
+// 故障来源分组: 市民来源 vs 内部发现。
+export const FAULT_SOURCE_GROUP = {
+  citizen: { label: '市民上报', type: 'warning' },
+  internal: { label: '内部发现', type: 'primary' },
+}
+
+// 市民来源包含的故障来源取值。
+export const CITIZEN_SOURCES = ['citizen']
+
 // 追踪时间线的节点名称。
 export const TIMELINE_STAGE = {
+  citizen_reported: { label: '市民报修受理', type: 'warning' },
+  citizen_verified: { label: '核实转故障', type: 'success' },
   reported: { label: '故障登记', type: 'primary' },
   repair_started: { label: '维修开工', type: 'warning' },
   repair_finished: { label: '维修完成', type: 'success' },

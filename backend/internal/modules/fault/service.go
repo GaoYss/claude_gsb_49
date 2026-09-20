@@ -55,6 +55,12 @@ func (s *Service) GetByNo(ctx context.Context, faultNo string) (*Fault, error) {
 	return s.repo.GetByNo(ctx, faultNo)
 }
 
+// GetOpenByLamp 查询某盏路灯当前未闭环的故障, 不存在时返回 nil。
+// 供市民报修核实等场景复用既有工单, 避免同灯重复建单。
+func (s *Service) GetOpenByLamp(ctx context.Context, lampID uint) (*Fault, error) {
+	return s.repo.GetOpenByLamp(ctx, lampID)
+}
+
 // List 分页查询故障列表, 同时返回归一化后的分页信息。
 func (s *Service) List(ctx context.Context, query ListQuery) ([]Fault, int64, pagination.Query, error) {
 	page := pagination.Parse(query.Params, faultSortSpec)

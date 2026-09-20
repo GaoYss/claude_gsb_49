@@ -60,6 +60,33 @@
         </el-col>
       </el-row>
 
+      <el-card v-if="result.citizen_reports?.length" shadow="never" class="citizen-card">
+        <div class="section-title">
+          <span>市民报修来源 ({{ result.citizen_reports.length }})</span>
+          <el-tag type="warning" effect="plain" size="small">市民上报</el-tag>
+        </div>
+        <el-table :data="result.citizen_reports" size="small" border>
+          <el-table-column prop="report_no" label="报修单号" width="150" />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }"><StatusTag :dict="REPORT_STATUS" :value="row.status" /></template>
+          </el-table-column>
+          <el-table-column prop="reporter" label="报修人" width="100">
+            <template #default="{ row }">{{ row.reporter || '匿名' }}</template>
+          </el-table-column>
+          <el-table-column label="上报时间" width="150">
+            <template #default="{ row }">{{ formatDateTime(row.reported_at) }}</template>
+          </el-table-column>
+          <el-table-column prop="content" label="市民原始描述" min-width="200" show-overflow-tooltip />
+          <el-table-column label="核实" width="160">
+            <template #default="{ row }">
+              <span v-if="row.verified_at">{{ formatDateTime(row.verified_at) }} · {{ row.verified_by || '-' }}</span>
+              <span v-else-if="row.merged_into_no" class="text-muted">并入 {{ row.merged_into_no }}</span>
+              <span v-else class="text-muted">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
       <el-card shadow="never">
         <div class="section-title">处置时间线</div>
         <el-timeline v-if="result.timeline?.length">
@@ -143,6 +170,7 @@ import {
   FAULT_STATUS,
   REPAIR_RESULT,
   REPAIR_STATUS,
+  REPORT_STATUS,
   RUN_STATUS,
   TIMELINE_STAGE,
   dictLabel,

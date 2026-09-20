@@ -54,28 +54,66 @@
         color="#409eff"
         :hint="`故障累计 ${overview.fault.total} 条`"
       />
+      <StatCard
+        label="市民报修待核实"
+        :value="overview.report.pending_total"
+        suffix="单"
+        icon="Bell"
+        color="#e6a23c"
+        :hint="`今日新增报修 ${overview.report.today_new} 单`"
+      />
     </div>
 
     <el-row :gutter="16">
-      <el-col :xs="24" :md="8">
+      <el-col :xs="24" :md="6">
         <el-card shadow="never">
           <div class="section-title">路灯运行状态</div>
           <BarList :items="runStatusItems" />
         </el-card>
       </el-col>
-      <el-col :xs="24" :md="8">
+      <el-col :xs="24" :md="6">
         <el-card shadow="never">
           <div class="section-title">故障处理状态</div>
           <BarList :items="faultStatusItems" />
         </el-card>
       </el-col>
-      <el-col :xs="24" :md="8">
+      <el-col :xs="24" :md="6">
+        <el-card shadow="never">
+          <div class="section-title">故障来源: 市民 vs 内部</div>
+          <BarList :items="sourceGroupItems" />
+          <div class="source-detail text-muted">
+            市民上报 {{ overview.fault.citizen_total }} 条 · 内部发现 {{ overview.fault.internal_total }} 条
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :xs="24" :md="6">
         <el-card shadow="never">
           <div class="section-title">故障类型分布</div>
           <BarList :items="overview.fault_by_type" />
         </el-card>
       </el-col>
     </el-row>
+
+    <el-card shadow="never" class="report-card">
+      <div class="section-title">
+        <span>市民报修队列</span>
+        <el-button link type="primary" @click="$router.push('/reports')">前往核实</el-button>
+      </div>
+      <div class="report-channel">
+        <div class="report-channel__item report-channel__item--citizen">
+          <div class="report-channel__value">{{ overview.report.confirmed_total }}</div>
+          <div class="report-channel__label">核实有效 · 已转故障</div>
+        </div>
+        <div class="report-channel__item report-channel__item--merged">
+          <div class="report-channel__value">{{ overview.report.merged_total }}</div>
+          <div class="report-channel__label">重复上报自动合并</div>
+        </div>
+        <div class="report-channel__item report-channel__item--invalid">
+          <div class="report-channel__value">{{ overview.report.invalid_total }}</div>
+          <div class="report-channel__label">核实无效 · 已注明原因</div>
+        </div>
+      </div>
+    </el-card>
 
     <el-row :gutter="16">
       <el-col :xs="24" :md="12">
@@ -87,8 +125,15 @@
           <el-table :data="overview.recent_faults" size="small" @row-click="goTrack">
             <el-table-column prop="fault_no" label="故障单号" width="140" />
             <el-table-column prop="lamp_code" label="路灯编号" width="110" />
-            <el-table-column prop="road_name" label="道路" min-width="100" />
-            <el-table-column prop="fault_type" label="类型" width="100" />
+            <el-table-column prop="road_name" label="道路" min-width="90" />
+            <el-table-column prop="fault_type" label="类型" width="90" />
+            <el-table-column label="来源" width="80">
+              <template #default="{ row }">
+                <el-tag :type="row.source === 'citizen' ? 'warning' : 'primary'" size="small" effect="plain">
+                  {{ row.source === 'citizen' ? '市民' : '内部' }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="90">
               <template #default="{ row }"><StatusTag :dict="FAULT_STATUS" :value="row.status" /></template>
             </el-table-column>
@@ -143,10 +188,15 @@ const loading = ref(false)
 
 const emptyOverview = () => ({
   lamp: { total: 0, road_count: 0, by_run_status: {} },
-  fault: { total: 0, open_total: 0, by_status: {}, today_reported: 0, overdue_total: 0 },
+  fault: {
+    total: 0, open_total: 0, by_status: {}, by_source: {},
+    citizen_total: 0, internal_total: 0, today_reported: 0, overdue_total: 0,
+  },
   repair: { total: 0, ongoing_total: 0, finished_total: 0, today_finished: 0, average_duration_hours: 0, total_cost: 0 },
+  report: { total: 0, pending_total: 0, confirmed_total: 0, invalid_total: 0, merged_total: 0, today_new: 0 },
   fault_by_type: [],
   fault_by_level: [],
+  fault_by_source: [],
   top_roads: [],
   recent_faults: [],
   overdue_faults: [],
@@ -172,6 +222,11 @@ const faultStatusItems = computed(() =>
 const pendingCount = computed(() => overview.value.fault.by_status?.pending ?? 0)
 const processingCount = computed(() => overview.value.fault.by_status?.processing ?? 0)
 
+const sourceGroupItems = computed(() => [
+  { label: '市民上报', count: overview.value.fault.citizen_total },
+  { label: '内部发现', count: overview.value.fault.internal_total },
+])
+
 async function load() {
   loading.value = true
   try {
@@ -189,3 +244,50 @@ function goTrack(row) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.source-detail {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.report-card {
+  margin-top: 0;
+}
+
+.report-channel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.report-channel__item {
+  border-radius: 6px;
+  padding: 16px;
+  text-align: center;
+  background-color: #f7f9fc;
+}
+
+.report-channel__item--citizen {
+  background-color: #f0f9eb;
+}
+
+.report-channel__item--merged {
+  background-color: #fdf6ec;
+}
+
+.report-channel__item--invalid {
+  background-color: #f4f4f5;
+}
+
+.report-channel__value {
+  font-size: 26px;
+  font-weight: 600;
+}
+
+.report-channel__label {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #606266;
+}
+</style>

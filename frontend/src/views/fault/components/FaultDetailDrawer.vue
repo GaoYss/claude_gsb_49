@@ -41,6 +41,20 @@
           <el-descriptions-item label="功率">{{ detail.lamp.power ? `${detail.lamp.power} W` : '-' }}</el-descriptions-item>
         </el-descriptions>
 
+        <div v-if="detail.citizen_reports?.length" class="drawer-block">
+          <div class="section-title">市民报修来源 ({{ detail.citizen_reports.length }})</div>
+          <el-table :data="detail.citizen_reports" size="small" border>
+            <el-table-column prop="report_no" label="报修单号" width="140" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }"><StatusTag :dict="REPORT_STATUS" :value="row.status" /></template>
+            </el-table-column>
+            <el-table-column prop="reporter" label="报修人" width="90">
+              <template #default="{ row }">{{ row.reporter || '匿名' }}</template>
+            </el-table-column>
+            <el-table-column prop="content" label="市民原始描述" min-width="160" show-overflow-tooltip />
+          </el-table>
+        </div>
+
         <div class="section-title drawer-block">处理时间线</div>
         <el-timeline v-if="detail.timeline?.length">
           <el-timeline-item
@@ -83,7 +97,7 @@
 import { ref } from 'vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import { statusApi } from '@/api/status'
-import { FAULT_LEVEL, FAULT_SOURCE, FAULT_STATUS, REPAIR_RESULT, REPAIR_STATUS, RUN_STATUS, TIMELINE_STAGE, dictLabel, dictType } from '@/constants/dict'
+import { FAULT_LEVEL, FAULT_SOURCE, FAULT_STATUS, REPAIR_RESULT, REPAIR_STATUS, REPORT_STATUS, RUN_STATUS, TIMELINE_STAGE, dictLabel, dictType } from '@/constants/dict'
 import { formatDateTime } from '@/utils/format'
 
 const props = defineProps({

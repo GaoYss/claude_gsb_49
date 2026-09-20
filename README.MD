@@ -16,10 +16,11 @@
 | --- | --- | --- |
 | 路灯台账 | 路灯基础档案维护 | 编号/道路/运行状态/灯具类型筛选, 按道路与状态统计, 删除前校验未闭环故障 |
 | 故障登记 | 故障工单登记与流转 | 自动生成故障单号, 紧急程度分级, 状态机流转, 闭环关闭 |
+| 市民报修 | 市民来音受理与核实 | 灯杆编号/位置描述报修, 待核实队列, 有效转故障(保留来源与原始描述), 无效注明原因, 重复上报自动合并 |
 | 维修记录录入 | 针对故障单登记维修过程 | 自动生成维修单号, 开工/完工时间, 耗材与费用, 四种维修结果 |
-| 维修状态查询 | 只读的综合看板与追踪视图 | 全局概览, 路灯级维修状态列表, 按故障单号/路灯编号的全链路时间线 |
+| 维修状态查询 | 只读的综合看板与追踪视图 | 全局概览(区分市民/内部来源), 路灯级维修状态列表, 按故障单号/路灯编号的全链路时间线 |
 
-四个模块在后端是四个平级的独立包 (`internal/modules/{lamp,fault,repair,status}`), 在前端是四组独立的视图与子组件, 互不耦合; 新增一个业务模块只需要实现 `module.Module` 接口并注册。
+五个模块在后端是五个平级的独立包 (`internal/modules/{lamp,fault,report,repair,status}`), 在前端是五组独立的视图与子组件, 互不耦合; 新增一个业务模块只需要实现 `module.Module` 接口并注册。
 
 ---
 
@@ -44,6 +45,7 @@
 │   │   ├── modules/                      # ★ 业务模块, 每个模块一套分层
 │   │   │   ├── lamp/                     #   路灯台账
 │   │   │   ├── fault/                    #   故障登记
+│   │   │   ├── report/                   #   市民报修(受理/核实/合并)
 │   │   │   ├── repair/                   #   维修记录录入
 │   │   │   └── status/                   #   维修状态查询(只读, 不建表)
 │   │   ├── response/                     # 统一响应信封 Envelope / PageData / OK / Fail
@@ -67,6 +69,7 @@
 │   │       ├── dashboard/DashboardView.vue
 │   │       ├── lamp/LampListView.vue + components/LampFormDialog.vue
 │   │       ├── fault/FaultListView.vue + components/{FaultFormDialog,FaultDetailDrawer}.vue
+│   │       ├── report/ReportListView.vue + components/{ReportSubmitDialog,ReportVerifyDialog,ReportInvalidDialog,ReportDetailDrawer}.vue
 │   │       ├── repair/RepairListView.vue + components/{RepairFormDialog,FinishRepairDialog}.vue
 │   │       └── status/{StatusLampView,StatusTrackView}.vue
 │   ├── nginx.conf                        # 生产: SPA 回退 + /api 反向代理
@@ -104,8 +107,9 @@ modules/<name>/
 ```text
 lamp.New(db)                                   -> 路灯台账(无依赖)
 fault.New(db, lampService)                     -> 故障登记(读取路灯校验)
+report.New(db, lampService, faultService)      -> 市民报修(按编号定位路灯, 核实后转故障)
 repair.New(db, faultService)                   -> 维修记录(驱动故障状态流转)
-status.New(db, lampRepo, faultRepo, repairRepo)-> 维修状态查询(只读聚合)
+status.New(db, lampRepo, faultRepo, repairRepo, reportRepo) -> 维修状态查询(只读聚合)
 ```
 
 路灯运行状态需要根据故障反向回填, 但 `lamp` 不能依赖 `fault`, 因此用 `lampService.SetOpenFaultCounter(faultModule.Repository())` 注入一个统计端口, 避免构造函数循环依赖。
@@ -270,6 +274,18 @@ go test ./...
 | DELETE | `/faults/:id` | 删除(仅已关闭且无维修记录) |
 | POST | `/faults/:id/close` | 关闭故障 |
 
+### 市民报修
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/reports` | 分页查询报修队列(状态/类型/道路/时间区间) |
+| POST | `/reports` | 市民提交报修(灯杆编号或道路+位置描述; 重复上报自动合并) |
+| GET | `/reports/summary` | 队列汇总(待核实/有效/无效/合并/今日新增) |
+| GET | `/reports/meta` | 字典: 状态/故障类型/合并窗口 |
+| GET | `/reports/:id` | 详情(含被合并的重复上报) |
+| POST | `/reports/:id/verify` | 核实有效, 转正式故障(来源=市民上报, 保留原始描述) |
+| POST | `/reports/:id/invalid` | 核实无效, 必须填写原因 |
+
 ### 维修记录录入
 
 | 方法 | 路径 | 说明 |
@@ -288,7 +304,7 @@ go test ./...
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/status/overview` | 全局概览: 台账/故障/维修汇总 + 类型与道路分布 + 逾期清单 |
+| GET | `/status/overview` | 全局概览: 台账/故障/维修/报修汇总 + 市民与内部来源区分 + 类型与道路分布 + 逾期清单 |
 | GET | `/status/lamps` | 路灯级维修状态列表(可只看未闭环) |
 | GET | `/status/track` | 全链路追踪, 参数 `fault_no` 或 `lamp_code` |
 
@@ -296,8 +312,11 @@ go test ./...
 
 ## 八、业务规则
 
-- **单号**: 故障单 `GD + YYYYMMDD + 4 位序号`, 维修单 `WX + YYYYMMDD + 4 位序号`, 唯一索引冲突时自动重试。
+- **单号**: 故障单 `GD + YYYYMMDD + 4 位序号`, 维修单 `WX + YYYYMMDD + 4 位序号`, 报修单 `BX + YYYYMMDD + 4 位序号`, 唯一索引冲突时自动重试。
 - **一灯一单**: 同一路灯同时只允许一条未闭环故障(409); 同一故障同时只允许一条进行中维修记录(409)。
+- **市民报修受理**: 凭灯杆编号, 或「道路 + 位置描述」即可受理; 编号在台账中不存在不阻断受理, 保留原文转人工核实。
+- **重复上报自动合并**: 默认 2 小时窗口内, 同一盏路灯(按台账编号 / 相同灯杆编号 / 道路+位置描述一致)已有待核实报修时, 新上报标记为「重复合并」并入主单, 主单重复次数累加; 主单核实后重复单一并关联正式故障。
+- **报修核实**: 待核实报修经现场核实后, 有效则转为正式故障(来源固定为「市民上报」, 故障描述原样保留市民原始描述); 无效必须填写原因; 同灯已有未闭环故障时直接关联既有工单, 不重复建单。
 - **故障状态机**: `待处理 -> 维修中 -> 已修复 -> 已关闭`; 已关闭的故障拒绝任何再操作; 允许 `已修复 -> 维修中` 回退。
 - **维修结果**: 只有 `已修复(fixed)` 会把故障推进到 `已修复`, 其余结果保持 `维修中`。
 - **路灯运行状态自动联动**: 存在 `维修中` 故障 -> `维修中(maintenance)`; 存在 `待处理` 故障 -> `故障(fault)`; 否则 -> `正常(normal)`; `停用(offline)` 由人工维护。
@@ -313,6 +332,7 @@ go test ./...
 
 - 6 条道路, 每条 5 盏路灯, 共 **30 盏**, 覆盖 `正常 / 故障 / 维修中 / 停用` 四种运行状态;
 - **14 条故障**, 覆盖待处理 / 维修中 / 已修复 / 已关闭四种状态, 其中包含 2 条已逾期;
-- **12 条维修记录**, 含进行中与已完工, 带耗材、费用与维修结果。
+- **12 条维修记录**, 含进行中与已完工, 带耗材、费用与维修结果;
+- **10 条市民报修**, 覆盖待核实 / 核实有效 / 核实无效 / 重复合并四种状态, 其中 2 条带被合并的重复上报。
 
 想从空库开始, 把 `APP_SEED` 设为 `false`, 或删除数据卷后重启。

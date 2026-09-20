@@ -13,6 +13,7 @@ import (
 	"streetlight/internal/modules/fault"
 	"streetlight/internal/modules/lamp"
 	"streetlight/internal/modules/repair"
+	"streetlight/internal/modules/report"
 	"streetlight/internal/modules/status"
 )
 
@@ -20,6 +21,7 @@ type harness struct {
 	lamps   *lamp.Service
 	faults  *fault.Service
 	repairs *repair.Service
+	reports *report.Service
 	status  *status.Service
 }
 
@@ -36,7 +38,7 @@ func newHarness(t *testing.T) *harness {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 
-	require.NoError(t, db.AutoMigrate(&lamp.Lamp{}, &fault.Fault{}, &repair.Repair{}))
+	require.NoError(t, db.AutoMigrate(&lamp.Lamp{}, &fault.Fault{}, &repair.Repair{}, &report.Report{}))
 
 	lampRepository := lamp.NewRepository(db)
 	lampService := lamp.NewService(lampRepository)
@@ -48,11 +50,15 @@ func newHarness(t *testing.T) *harness {
 	repairRepository := repair.NewRepository(db)
 	repairService := repair.NewService(repairRepository, faultService)
 
+	reportRepository := report.NewRepository(db)
+	reportService := report.NewService(reportRepository, lampService, faultService)
+
 	return &harness{
 		lamps:   lampService,
 		faults:  faultService,
 		repairs: repairService,
-		status:  status.NewService(db, lampRepository, faultRepository, repairRepository),
+		reports: reportService,
+		status:  status.NewService(db, lampRepository, faultRepository, repairRepository, reportRepository),
 	}
 }
 

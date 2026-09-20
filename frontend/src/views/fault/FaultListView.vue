@@ -17,6 +17,9 @@
         <el-select v-model="query.fault_level" placeholder="紧急程度" clearable @change="handleSearch">
           <el-option v-for="(item, key) in FAULT_LEVEL" :key="key" :label="item.label" :value="key" />
         </el-select>
+        <el-select v-model="query.source" placeholder="故障来源" clearable @change="handleSearch">
+          <el-option v-for="(item, key) in FAULT_SOURCE" :key="key" :label="item.label" :value="key" />
+        </el-select>
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -45,7 +48,13 @@
           <template #default="{ row }"><StatusTag :dict="FAULT_STATUS" :value="row.status" /></template>
         </el-table-column>
         <el-table-column label="来源" width="100">
-          <template #default="{ row }">{{ dictLabel(FAULT_SOURCE, row.source) }}</template>
+          <template #default="{ row }">
+            <el-tag
+              :type="row.source === 'citizen' ? 'warning' : 'primary'"
+              size="small"
+              effect="plain"
+            >{{ dictLabel(FAULT_SOURCE, row.source) }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column prop="reporter" label="上报人" width="100" />
         <el-table-column label="上报时间" width="150">
@@ -112,6 +121,7 @@ const { loading, rows, total, query, load, search, reset, changePage, changePage
   status: '',
   fault_type: '',
   fault_level: '',
+  source: '',
   start_date: '',
   end_date: '',
   only_open: false,
